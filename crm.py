@@ -11,7 +11,7 @@ Data lives in your Supabase project (same tables as setup/supabase-setup.sql), s
 sees the same records. Updates: app.py downloads the newest app.py + crm.py from GitHub on every
 start, so "Refresh App" is all you need after Claude changes something.
 """
-CRM_VERSION = "1.1.0"
+CRM_VERSION = "1.2.0"
 
 import os
 import sys
@@ -605,11 +605,202 @@ def request_text(st, kind, sid="", i=0, scope=""):
     return f"{ask}\n\nGive me the plan as a .json file in the format below so I can import it into my CRM.\n\n{format_spec(st)}\n\n---\n{report_text(st, s['id'] if s else scope)}"
 
 
+# ------------------------------------------------------------------ listing photos -> one folder per SKU
+# Same layout as the old Image Organizer, so folders it made keep working:
+#   <folder>/<SKU>/IMAGE1.jpg ... IMAGE10.jpg + manifest.json  (manifest: file -> url)
+# Replaced or removed photos are moved to <folder>/_replaced/<date>/<SKU>/ (never deleted).
+def photo_folder_name(l):
+    sku = re.sub(r'[\\/:*?"<>|]', "-", str(l.get("sku") or "").strip()).strip(". ")
+    if sku:
+        return sku
+    t = re.sub(r'[\\/:*?"<>|]', "-", str(l.get("title") or "listing")).strip()[:50].strip(". ")
+    return "NO-SKU " + (t or "listing")
+
+
+def photo_wanted(l):
+    return {f"IMAGE{i}.jpg": u for i, u in enumerate([u for u in (l.get("images") or []) if u][:10], 1)}
+
+
+def photo_manifest(folder):
+    try:
+        with open(os.path.join(folder, "manifest.json"), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def photo_check(root, l):
+    """Fast local check (no internet). Returns (state, photos_to_download)."""
+    folder = os.path.join(root, photo_folder_name(l))
+    wanted = photo_wanted(l)
+    if not os.path.isdir(folder):
+        return "new", len(wanted)
+    man = photo_manifest(folder)
+    todo = sum(1 for f, u in wanted.items() if not (isinstance(man.get(f), dict) and man[f].get("url") == u and os.path.exists(os.path.join(folder, f))))
+    extra = sum(1 for f in man if f not in wanted)
+    return ("changed" if (todo or extra) else "same"), todo
+
+
+class PhotoSync:
+    def __init__(self, root, log, progress):
+        self.root = root; self.log = log; self.progress = progress
+        self.stop = threading.Event()
+        self.stats = dict(new=0, changed=0, same=0, downloaded=0, moved=0, renamed=0, failed=0)
+        self.session = requests.Session()
+        self.verify = True
+
+    def _move_away(self, name, path):
+        dest = os.path.join(self.root, "_replaced", date.today().isoformat(), name)
+        os.makedirs(dest, exist_ok=True)
+        base = os.path.basename(path).replace(".move", ""); target = os.path.join(dest, base); n = 2
+        while os.path.exists(target):
+            b, e = os.path.splitext(base); target = os.path.join(dest, f"{b}_{n}{e}"); n += 1
+        os.replace(path, target) if os.path.splitdrive(path)[0] == os.path.splitdrive(target)[0] else __import__("shutil").move(path, target)
+        self.stats["moved"] += 1
+
+    def _get(self, url, **kw):
+        try:
+            return self.session.get(url, timeout=30, verify=self.verify, **kw)
+        except requests.exceptions.SSLError:
+            self.verify = False
+            try:
+                import urllib3; urllib3.disable_warnings()
+            except Exception:
+                pass
+            return self.session.get(url, timeout=30, verify=False, **kw)
+
+    def _same_size(self, url, path):
+        try:
+            r = self.session.head(url, timeout=10, allow_redirects=True, verify=self.verify)
+            n = int(r.headers.get("Content-Length", "-1"))
+            return r.status_code == 200 and n > 0 and n == os.path.getsize(path)
+        except Exception:
+            return False
+
+    def _download(self, url, path):
+        tmp = path + ".part"
+        for attempt in range(4):
+            if self.stop.is_set():
+                return False
+            try:
+                r = self._get(url, stream=True)
+                if r.status_code != 200:
+                    raise IOError(f"HTTP {r.status_code}")
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(65536):
+                        if chunk:
+                            f.write(chunk)
+                if os.path.getsize(tmp) == 0:
+                    raise IOError("empty file")
+                os.replace(tmp, path)
+                return True
+            except Exception as e:
+                err = str(e)
+                time.sleep([1, 2, 4, 0][attempt])
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        self.log(f"   failed: {os.path.basename(path)} ({err})")
+        return False
+
+    def sync_listing(self, l):
+        from concurrent.futures import ThreadPoolExecutor
+        name = photo_folder_name(l); folder = os.path.join(self.root, name); wanted = photo_wanted(l)
+        is_new = not os.path.isdir(folder)
+        os.makedirs(folder, exist_ok=True)
+        for f in os.listdir(folder):
+            if f.endswith(".part"):
+                try:
+                    os.remove(os.path.join(folder, f))
+                except Exception:
+                    pass
+            elif f.endswith(".move"):
+                self._move_away(name, os.path.join(folder, f))
+        man = photo_manifest(folder)
+        urls = set(wanted.values()); kept = set(); parked = {}; changes = 0
+        for f in list(man.keys()):
+            e = man.get(f) if isinstance(man.get(f), dict) else {}
+            u = e.get("url"); p = os.path.join(folder, f)
+            if not os.path.exists(p):
+                man.pop(f, None); continue
+            if wanted.get(f) == u:
+                kept.add(f); continue
+            if u in urls and u not in parked:
+                os.replace(p, p + ".move"); parked[u] = p + ".move"
+            else:
+                self._move_away(name, p)
+            changes += 1; man.pop(f, None)
+        for f, u in wanted.items():
+            p = os.path.join(folder, f)
+            if f in kept or not os.path.exists(p):
+                continue
+            if u not in parked and self._same_size(u, p):
+                man[f] = {"url": u, "downloaded_at": datetime.now().isoformat(timespec="seconds"), "adopted": True}; kept.add(f)
+            else:
+                self._move_away(name, p); changes += 1
+        jobs = []
+        for f, u in wanted.items():
+            if f in kept:
+                continue
+            p = os.path.join(folder, f)
+            if u in parked and os.path.exists(parked[u]):
+                os.replace(parked.pop(u), p); man[f] = {"url": u, "downloaded_at": datetime.now().isoformat(timespec="seconds")}
+                self.stats["renamed"] += 1; changes += 1
+            else:
+                jobs.append((f, u, p))
+        for p in parked.values():
+            if os.path.exists(p):
+                self._move_away(name, p)
+        if jobs:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                results = list(ex.map(lambda j: (j, self._download(j[1], j[2])), jobs))
+            for (f, u, p), ok in results:
+                if ok:
+                    man[f] = {"url": u, "downloaded_at": datetime.now().isoformat(timespec="seconds")}; self.stats["downloaded"] += 1
+                else:
+                    self.stats["failed"] += 1
+        tmp = os.path.join(folder, "manifest.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(man, fh, indent=2)
+        os.replace(tmp, os.path.join(folder, "manifest.json"))
+        if is_new:
+            self.stats["new"] += 1; return "NEW", len(jobs)
+        if jobs or changes:
+            self.stats["changed"] += 1; return "UPDATED", len(jobs)
+        self.stats["same"] += 1; return "SKIP", 0
+
+    def run(self, listings):
+        names = set()
+        total = len(listings)
+        for i, l in enumerate(listings, 1):
+            if self.stop.is_set():
+                self.log("Stopped. Run again to continue where it left off."); break
+            names.add(photo_folder_name(l).lower())
+            try:
+                state, n = self.sync_listing(l)
+                if state != "SKIP":
+                    self.log(f"{state:8} {photo_folder_name(l)}  ({n} photo{'s' if n != 1 else ''} downloaded)")
+            except Exception as e:
+                self.stats["failed"] += 1; self.log(f"ERROR    {photo_folder_name(l)}: {e}")
+            self.progress(i, total)
+        others = [d for d in os.listdir(self.root) if os.path.isdir(os.path.join(self.root, d)) and d != "_replaced" and d.lower() not in names] if os.path.isdir(self.root) else []
+        st = self.stats
+        summary = (f"New listings {st['new']} · updated {st['changed']} · unchanged {st['same']} · photos downloaded {st['downloaded']} · "
+                   f"reordered {st['renamed']} · moved to _replaced {st['moved']} · failed {st['failed']}")
+        try:
+            with open(os.path.join(self.root, "_sync-log.txt"), "a", encoding="utf-8") as f:
+                f.write(f"\n==== {datetime.now():%Y-%m-%d %H:%M}\n{summary}\n" + (f"Folders not in the current listings (left as they are): {', '.join(sorted(others))}\n" if others else ""))
+        except Exception:
+            pass
+        return summary, others
+
+
 # ------------------------------------------------------------------ the CRM UI
-CRM_PAGES = ["Dashboard", "Tasks", "This week", "Listings", "Orders & sales", "Customers", "Sheets", "Import data", "Shops & schedules", "Report for Claude", "Settings & updates"]
+CRM_PAGES = ["Dashboard", "Tasks", "This week", "Listings", "Photos", "Orders & sales", "Customers", "Sheets", "Import data", "Shops & schedules", "Report for Claude", "Settings & updates"]
 NAV = [("WORK", ["Dashboard", "Tasks", "This week"]),
-       ("SHOP DATA", ["Listings", "Orders & sales", "Customers", "Sheets"]),
-       ("TOOLS", None),
+       ("SHOP DATA", ["Listings", "Photos", "Orders & sales", "Customers", "Sheets"]),
        ("SETUP", ["Import data", "Shops & schedules", "Report for Claude", "Settings & updates"])]
 
 
@@ -1494,12 +1685,9 @@ class CRM:
         if lid:
             self.btn(row, "Open on Etsy", lambda: __import__("webbrowser").open(f"https://www.etsy.com/listing/{lid}")).pack(side="left", padx=(0, 6))
         folder = None
-        try:
-            outdir = self.app.org_output_dir.get()
-            if outdir and l.get("sku") and os.path.isdir(os.path.join(outdir, l["sku"])):
-                folder = os.path.join(outdir, l["sku"])
-        except Exception:
-            pass
+        root = self.photo_root(l["shop"])
+        if root and os.path.isdir(os.path.join(root, photo_folder_name(l))):
+            folder = os.path.join(root, photo_folder_name(l))
         if folder:
             self.btn(row, "Open photos folder", lambda: self._open_path(folder)).pack(side="left", padx=(0, 6))
         imgs = l.get("images") or []
@@ -1665,6 +1853,132 @@ class CRM:
         w, _ = self.table(f, [("d", "Date", 90, "w"), ("i", "Item", 420, "w"), ("t", "Total", 90, "e"), ("c", "Coupon", 100, "w")], rows, height=10)
         w.pack(fill="both", expand=True, pady=6)
 
+    # ---------- photos
+    def photo_root(self, sid):
+        return (self.cfg.get("photo_folders") or {}).get(sid) or ""
+
+    def pg_photos(self):
+        p = self.page()
+        self.head(p, "Photos", "Saves every listing photo into one folder per SKU on this laptop. It uses the latest Listings CSV you imported. "
+                               "Only new or changed photos are downloaded; replaced ones go to _replaced, nothing is deleted.")
+        shops = [s for s in self.st.shop_list() if self.shop == "all" or s["id"] == self.shop]
+        if not shops:
+            self.empty(p, "Add your shops first in Shops & schedules."); return
+        running = getattr(self, "_photo_job", None)
+        for s in shops:
+            ls = [l for l in self.st.listings if l["shop"] == s["id"] and l.get("active") is not False]
+            with_img = [l for l in ls if l.get("images")]
+            root = self.photo_root(s["id"])
+            self.section(p, s["name"])
+            i = self.card(p, accent=C["yellow"])
+            top = ctk.CTkFrame(i, fg_color="transparent"); top.pack(fill="x")
+            ctk.CTkLabel(top, text="Save photos in", font=F(11), text_color=C["muted"], anchor="w").pack(anchor="w")
+            row = ctk.CTkFrame(top, fg_color="transparent"); row.pack(fill="x", pady=(2, 0))
+            ctk.CTkLabel(row, text=root or "No folder chosen yet", font=F(13, mono=True), text_color=C["ink"] if root else C["warn"], anchor="w").pack(side="left", fill="x", expand=True)
+            self.btn(row, "Choose folder...", lambda sid=s["id"]: self.choose_photo_folder(sid), small=True).pack(side="right")
+            if root and os.path.isdir(root):
+                self.btn(row, "Open folder", lambda r=root: self._open_path(r), "ghost", small=True).pack(side="right", padx=6)
+            if not ls:
+                ctk.CTkLabel(i, text="No listings imported for this shop yet. Import its Listings CSV under Import data.", font=F(12), text_color=C["warn"], anchor="w").pack(fill="x", pady=(10, 0))
+                self.btn(i, "Open Import data", lambda: self.show("Import data"), small=True).pack(anchor="w", pady=(6, 0))
+                continue
+            if not with_img:
+                ctk.CTkLabel(i, text="The imported listings have no photo links yet. Run the latest setup/supabase-setup.sql in Supabase once, then import the Listings CSV again.",
+                             font=F(12), text_color=C["warn"], anchor="w", wraplength=820, justify="left").pack(fill="x", pady=(10, 0))
+                continue
+            imp = max((str(l.get("imported_at") or "") for l in ls), default="")
+            info = f"{len(with_img)} listings with {sum(len(l.get('images') or []) for l in with_img):,} photos · from the Listings CSV imported {short(imp[:10]) if imp else '-'}"
+            ctk.CTkLabel(i, text=info, font=F(12), text_color=C["muted"], anchor="w").pack(fill="x", pady=(10, 0))
+            if root:
+                cnt = {"new": 0, "changed": 0, "same": 0}; todo = 0
+                for l in with_img:
+                    stt, n = photo_check(root, l); cnt[stt] += 1; todo += n
+                self.kpis(i, [(cnt["new"], "New listings (no folder yet)", "warn" if cnt["new"] else ""), (cnt["changed"], "Listings with changed photos", "warn" if cnt["changed"] else ""),
+                              (cnt["same"], "Up to date (skipped)", "ok"), (f"{todo:,}", "Photos to download")])
+            last = (self.cfg.get("photo_last") or {}).get(s["id"])
+            if last:
+                ctk.CTkLabel(i, text="Last sync: " + last, font=F(11, mono=True), text_color=C["faint"], anchor="w", wraplength=820, justify="left").pack(fill="x", pady=(4, 0))
+            act = ctk.CTkFrame(i, fg_color="transparent"); act.pack(fill="x", pady=(10, 0))
+            if running and running["shop"] == s["id"]:
+                self.btn(act, "Stop", lambda: running["sync"].stop.set(), "danger").pack(side="left")
+                running["bar_parent"] = i
+            elif running:
+                ctk.CTkLabel(act, text="Another shop is syncing...", text_color=C["muted"]).pack(side="left")
+            else:
+                self.btn(act, "Sync photos now", lambda sid=s["id"]: self.start_photo_sync(sid), "primary").pack(side="left")
+                self.btn(act, "Re-check", self.render, small=True).pack(side="left", padx=8)
+        if running:
+            box = self.card(p)
+            ctk.CTkLabel(box, text=f'Syncing {self.st.shop_name(running["shop"])}...', font=F(14, "bold"), anchor="w").pack(fill="x")
+            bar = ctk.CTkProgressBar(box); bar.pack(fill="x", pady=6); bar.set(running["done"] / max(1, running["total"]))
+            lab = ctk.CTkLabel(box, text=f'{running["done"]} of {running["total"]} listings', font=F(12, mono=True), text_color=C["muted"], anchor="w"); lab.pack(fill="x")
+            logb = ctk.CTkTextbox(box, height=220, font=F(11, mono=True)); logb.pack(fill="x", pady=(6, 0))
+            logb.insert("1.0", "\n".join(running["lines"][-400:])); logb.see("end")
+            running["widgets"] = (bar, lab, logb)
+        elif getattr(self, "_photo_result", None):
+            box = self.card(p, accent=C["ok"])
+            ctk.CTkLabel(box, text="Last run", font=F(14, "bold"), anchor="w").pack(fill="x")
+            logb = ctk.CTkTextbox(box, height=200, font=F(11, mono=True)); logb.pack(fill="x", pady=(6, 0))
+            logb.insert("1.0", self._photo_result); logb.configure(state="disabled")
+        ctk.CTkFrame(p, height=40, fg_color="transparent").pack()
+
+    def choose_photo_folder(self, sid):
+        cur = self.photo_root(sid)
+        path = filedialog.askdirectory(title=f"Folder for {self.st.shop_name(sid)} photos", initialdir=cur or os.path.expanduser("~"))
+        if not path:
+            return
+        self.cfg.setdefault("photo_folders", {})[sid] = os.path.normpath(path); save_cfg(self.cfg)
+        self.render()
+
+    def start_photo_sync(self, sid):
+        root = self.photo_root(sid)
+        if not root:
+            self.choose_photo_folder(sid); root = self.photo_root(sid)
+            if not root:
+                return
+        try:
+            os.makedirs(root, exist_ok=True)
+            test = os.path.join(root, ".write_test"); open(test, "w").close(); os.remove(test)
+        except Exception as e:
+            messagebox.showerror("Photos", f"Cannot write to this folder:\n{root}\n\n{e}"); return
+        ls = [l for l in self.st.listings if l["shop"] == sid and l.get("active") is not False and l.get("images")]
+        job = dict(shop=sid, done=0, total=len(ls), lines=[f"Folder: {root}", f"Listings: {len(ls)}", ""], widgets=None)
+
+        def ui_update():
+            w = job.get("widgets")
+            if w and all(x.winfo_exists() for x in w):
+                bar, lab, logb = w
+                bar.set(job["done"] / max(1, job["total"])); lab.configure(text=f'{job["done"]} of {job["total"]} listings')
+                logb.delete("1.0", "end"); logb.insert("1.0", "\n".join(job["lines"][-400:])); logb.see("end")
+
+        def log(msg):
+            job["lines"].append(msg); self.app.after(0, ui_update)
+
+        def progress(a, b):
+            job["done"] = a
+            if a % 5 == 0 or a == b:
+                self.app.after(0, ui_update)
+        sync = PhotoSync(root, log, progress); job["sync"] = sync
+        self._photo_job = job; self._photo_result = None
+        self.render()
+
+        def done(res):
+            summary, others = res
+            stamp = datetime.now().strftime("%d %b %Y %H:%M")
+            self.cfg.setdefault("photo_last", {})[sid] = f"{stamp} · {summary}"; save_cfg(self.cfg)
+            self._photo_job = None
+            self._photo_result = "\n".join(job["lines"][-300:]) + "\n\n" + summary + (f"\nFolders not in the current listings (left as they are): {', '.join(sorted(others))}" if others else "")
+            self.lbl_sync.configure(text="● Photos synced " + datetime.now().strftime("%H:%M"), text_color=C["ok"])
+            self.toast("Photos: " + summary[:120])
+            if self.view == "Photos":
+                self.render()
+
+        def failed(e, tb):
+            self._photo_job = None; self.fail(e, tb)
+            if self.view == "Photos":
+                self.render()
+        self.bg(lambda: sync.run(ls), done, failed, busy="Syncing photos...")
+
     # ---------- sheets
     def pg_sheets(self):
         p = self.page(scroll=False)
@@ -1818,11 +2132,11 @@ class CRM:
                     self.btn(rr, "Save it under Sheets instead", lambda: self.show("Sheets"), small=True).pack(side="left")
                 self.btn(rr, "Cancel", lambda: (setattr(self, "etsy_import", None), self.render()), "ghost").pack(side="left", padx=6)
                 prog.pack(side="left", padx=8)
-        if getattr(self, "last_listings_csv", None) and hasattr(self.app, "org_csv_path"):
+        if getattr(self, "last_listings_csv", None):
             i2 = self.card(p, accent=C["yellow"])
             ctk.CTkLabel(i2, text="Update listing photos too?", font=F(14, "bold"), anchor="w").pack(fill="x")
-            ctk.CTkLabel(i2, text="Opens the Image Organizer with this Listings CSV already chosen. It only downloads new or changed photos.", font=F(12), text_color=C["muted"], anchor="w").pack(fill="x")
-            self.btn(i2, "Open Image Organizer", self.open_organizer, "primary").pack(anchor="w", pady=(8, 0))
+            ctk.CTkLabel(i2, text="Photos uses the listings you just imported and only downloads new or changed photos.", font=F(12), text_color=C["muted"], anchor="w").pack(fill="x")
+            self.btn(i2, "Open Photos", lambda: self.show("Photos"), "primary").pack(anchor="w", pady=(8, 0))
         self.section(p, "Plan from Claude (.json)")
         i = self.card(p)
         ctk.CTkLabel(i, text="Choose the .json plan file Claude gives you, or paste its text below. Tasks you already finished keep their status.", font=F(12), text_color=C["muted"], anchor="w", wraplength=820, justify="left").pack(fill="x")
