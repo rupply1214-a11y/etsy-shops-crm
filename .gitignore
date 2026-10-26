@@ -1,0 +1,9 @@
+crm_config.json
+update_state.json
+*_backup.py
+*.py.new
+config.json
+error_log.txt
+listing_history.json
+__pycache__/
+Organizer_Report_*.txt

@@ -1,0 +1,60 @@
+ETSY SHOPS CRM (one app: CRM + all your tools)
+===================================
+
+Everything is now in ONE app: your existing tools (Image Organizer, URL Extractor,
+Performance Report, Sewing Tip Prompts, Listing Content) plus the CRM
+(Dashboard, Tasks, This week, Listings, Orders & sales, Customers, Sheets,
+Import data, Shops & schedules, Report for Claude, Settings & updates).
+Data is saved in your Supabase project, so all your laptops show the same records.
+
+FILES
+  app.py                 your app (Image Organizer bug fixed + CRM added)
+  crm.py                 the CRM part (must be in the same folder as app.py)
+  Start-Etsy-CRM.bat   double-click to start the app
+  setup\supabase-setup.sql   database setup (run once in Supabase)
+
+STEP 1 - Update the database (once, 2 minutes)
+  Supabase > SQL Editor > New query > paste ALL of setup\supabase-setup.sql > Run.
+  If a popup appears, choose "Run and enable RLS". Nothing is deleted; it only adds
+  two new tables (photo links and app updates).
+
+STEP 2 - Put the files in your tools folder (each laptop, first time only)
+  Copy app.py, crm.py and Start-Etsy-CRM.bat into the folder where your app.py is now
+  (replace the old app.py; keep your config.json there).
+  Double-click Start-Etsy-CRM.bat.
+
+STEP 3 - Sign in (each laptop, first time only)
+  The app opens on "Settings & updates":
+    Project URL:      your Supabase Project URL (Project Settings > API)
+    Publishable key:  Supabase > Project Settings > API Keys > Publishable key (sb_publishable_...)
+    Email / password: the email and password of the user you created in Supabase
+  Click Sign in. The app remembers this; next time it signs in by itself.
+
+STEP 4 - Bring in your data (once)
+  Import data > Plan from Claude > choose the starter plan file Claude gave you > Import plan.
+  Shops & schedules > + Add shop for your other 2 shops > Save changes.
+  For each shop: Etsy Shop Manager > Settings > Options > Download Data:
+    Orders: CSV type "Order Items", month empty, pick the year > Download
+    Listings: Download CSV
+  Then Import data > Etsy CSV > pick the shop > Choose CSV file > Import.
+  After importing Listings you get a button to open the Image Organizer with that CSV.
+
+DAILY USE
+  Dashboard: alerts first, then today's tasks. Start / Mark done / Tomorrow / Skip.
+  "Steps & copy text" opens the task with copy buttons (new title, tags, captions).
+  Report for Claude: copy a ready request into a Claude chat; import the .json plan
+  Claude gives you under Import data.
+
+UPDATES
+  Nothing to download or install. Every time the app starts, or you press "Refresh App"
+  (bottom-left), it fetches the newest app.py and crm.py from GitHub
+  (github.com/rupply1214-a11y/etsy-shops-crm) and starts with them, on every laptop.
+  The previous version is kept as crm_backup.py / app_backup.py. If a new crm.py ever
+  fails to start, the app uses crm_backup.py and your old tools still work.
+  Settings & updates shows the current version and has "Check for updates now".
+
+IF SOMETHING GOES WRONG
+  Errors are written to error_log.txt in the app folder. Send it to Claude.
+  "Run the latest setup/supabase-setup.sql": do Step 1 again.
+  To read Excel files in Sheets you may need once:  pip install openpyxl
+  Free Supabase projects pause after a week without use: open supabase.com > project > Restore.
