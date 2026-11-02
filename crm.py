@@ -11,7 +11,7 @@ Data lives in your Supabase project (same tables as setup/supabase-setup.sql), s
 sees the same records. Updates: app.py downloads the newest app.py + crm.py from GitHub on every
 start, so "Refresh App" is all you need after Claude changes something.
 """
-CRM_VERSION = "1.2.0"
+CRM_VERSION = "1.2.1"
 
 import os
 import sys
@@ -204,6 +204,15 @@ PK = {"shops": ["owner", "id"], "tasks": ["owner", "id"], "listings": ["owner", 
 JSONDEF = {"shops": {"schedules": []}, "tasks": {"copy": []}, "datasets": {"columns": []}, "listings": {"images": []}}
 
 
+PAUSED_MSG = ("The database is not answering. Your free Supabase project is probably paused or still waking up. "
+              "Open supabase.com > your project > Restore project, wait 2-5 minutes, then Sign in again.")
+
+
+def server_down(r):
+    t = (r.text or "").lstrip()[:200].lower()
+    return r.status_code in (502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 530, 540, 544) or t.startswith("<!doctype") or t.startswith("<html")
+
+
 class Supa:
     def __init__(self, url, key):
         self.url = url.strip().rstrip("/")
@@ -222,6 +231,8 @@ class Supa:
                               headers={"apikey": self.key, "Content-Type": "application/json"}, timeout=30)
         except requests.RequestException:
             raise CrmError("No connection to the database. Check your internet and the Project URL.")
+        if r.status_code >= 400 and server_down(r):
+            raise CrmError(PAUSED_MSG)
         if r.status_code >= 400:
             try:
                 msg = r.json().get("error_description") or r.json().get("msg") or r.text
@@ -263,6 +274,8 @@ class Supa:
     def _check(self, r):
         if r.status_code < 400:
             return
+        if server_down(r):
+            raise CrmError(PAUSED_MSG)
         try:
             j = r.json(); msg = j.get("message") or j.get("hint") or r.text
         except Exception:
