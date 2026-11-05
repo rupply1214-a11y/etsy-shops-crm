@@ -11,7 +11,7 @@ Data lives in your Supabase project (same tables as setup/supabase-setup.sql), s
 sees the same records. Updates: app.py downloads the newest app.py + crm.py from GitHub on every
 start, so "Refresh App" is all you need after Claude changes something.
 """
-CRM_VERSION = "1.2.1"
+CRM_VERSION = "1.2.2"
 
 import os
 import sys
@@ -37,6 +37,7 @@ except Exception:  # pragma: no cover
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_PATH = os.path.join(HERE, "crm_config.json")
+PHOTO_LINKS_PATH = os.path.join(HERE, "listing_photo_links.json")  # photo links from the last Listings CSV, kept on this laptop
 
 # ------------------------------------------------------------------ look
 C = dict(bg="#0c0c0d", side="#111113", card="#161618", card2="#1d1d20", line="#2a2a2e", hover="#26262b",
@@ -180,6 +181,26 @@ def save_cfg(cfg):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
         os.replace(tmp, CFG_PATH)
+    except Exception:
+        pass
+
+
+def load_photo_links():
+    try:
+        with open(PHOTO_LINKS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_photo_links(shop, mapped):
+    links = load_photo_links()
+    links[shop] = {m["key"]: m.get("images") or [] for m in mapped}
+    try:
+        tmp = PHOTO_LINKS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(links, f)
+        os.replace(tmp, PHOTO_LINKS_PATH)
     except Exception:
         pass
 
@@ -359,6 +380,12 @@ class Store:
         self.shops = sb.select("shops")
         self.tasks = {t["id"]: t for t in sb.select("tasks")}
         self.listings = sb.select("listings")
+        links = load_photo_links()  # the database may not have the images column; the laptop copy fills the gap
+        for l in self.listings:
+            if not l.get("images"):
+                imgs = (links.get(l.get("shop")) or {}).get(l.get("key")) or []
+                if imgs:
+                    l["images"] = imgs; l["image_count"] = len(imgs)
         self.orders = sb.select("orders")
         self.notes = {n["shop"] + "|" + n["buyer"]: n for n in sb.select("customer_notes")}
         self.datasets = sb.select("datasets")
@@ -1896,7 +1923,7 @@ class CRM:
                 self.btn(i, "Open Import data", lambda: self.show("Import data"), small=True).pack(anchor="w", pady=(6, 0))
                 continue
             if not with_img:
-                ctk.CTkLabel(i, text="The imported listings have no photo links yet. Run the latest setup/supabase-setup.sql in Supabase once, then import the Listings CSV again.",
+                ctk.CTkLabel(i, text="No photo links on this laptop yet. Go to Import data and import the newest Listings CSV of this shop once, then come back here and click Sync photos now.",
                              font=F(12), text_color=C["warn"], anchor="w", wraplength=820, justify="left").pack(fill="x", pady=(10, 0))
                 continue
             imp = max((str(l.get("imported_at") or "") for l in ls), default="")
@@ -2203,6 +2230,7 @@ class CRM:
                 keep = {l["key"]: l for l in existing}; keys = {m["key"] for m in ei["mapped"]}
                 rows = [dict(m, notes=(keep.get(m["key"]) or {}).get("notes") or "", imported_at=now_iso()) for m in ei["mapped"]]
                 gone = [dict(l, active=False) for l in existing if l["key"] not in keys]
+                save_photo_links(ei["shop"], ei["mapped"])
                 self.sb.upsert("listings", rows + gone, progress)
             self.st.load(self.sb)
             return len(ei["mapped"])
@@ -2212,8 +2240,6 @@ class CRM:
                 self.last_listings_csv = ei["file"]
             self.etsy_import = None
             self.synced(); self.toast(f"Imported {n:,} rows into {self.st.shop_name(ei['shop'])}")
-            if self.sb.no_images_col:
-                messagebox.showinfo("Photo links", "Listings were saved. To also store photo links, run the latest setup/supabase-setup.sql once in Supabase > SQL Editor, then import the Listings CSV again.")
             self.render()
         self.bg(work, done, busy="Importing...")
 
