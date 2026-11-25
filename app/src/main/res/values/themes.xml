@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.SmartRoutine" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/bg</item>
+    </style>
+
+    <style name="Theme.SmartRoutine.Alarm" parent="Theme.SmartRoutine">
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
+
+    <color name="bg">#FFFBFE</color>
+    <color name="brand">#5B5BD6</color>
+</resources>
