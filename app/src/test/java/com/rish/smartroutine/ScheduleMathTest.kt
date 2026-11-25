@@ -44,7 +44,7 @@ class ScheduleMathTest {
         val routine = StarterRoutine.reminders(today)
         assertEquals("7 tasks", 7, routine.size)
         val duphalac = routine.first { it.title.contains("Duphalac") }
-        assertEquals("duphalac end", 1), duphalac.endDate, LocalDate.of(2026, 12)
+        assertEquals("duphalac end", LocalDate.of(2026, 12, 1), duphalac.endDate)
         assertEquals("duphalac day1 badge-day", 1, duphalac.courseDayOn(today))
         assertEquals("not tapering day5", false, duphalac.isTaperingOn(today.plusDays(4)))
         assertEquals("tapering day6", true, duphalac.isTaperingOn(today.plusDays(5)))
@@ -53,10 +53,10 @@ class ScheduleMathTest {
         assertEquals("last alarm on day7", LocalDateTime.of(2026,12,1,19,0), ScheduleMath.nextOccurrence(duphalac, LocalDateTime.of(2026,11,30,20,0)))
         assertEquals("no alarm after end", null, ScheduleMath.nextOccurrence(duphalac, LocalDateTime.of(2026,12,1,19,30)))
         val ext = duphalac.copy(extraDays = 1)
-        assertEquals("+1 day end", 2), ext.endDate, LocalDate.of(2026, 12)
+        assertEquals("+1 day end", LocalDate.of(2026, 12, 2), ext.endDate)
         assertEquals("+1 alarm", LocalDateTime.of(2026,12,2,19,0), ScheduleMath.nextOccurrence(ext, LocalDateTime.of(2026,12,1,19,30)))
         val gul = routine.first { it.hour == 11 }
-        assertEquals("gulkand end 15d", 9), gul.endDate, LocalDate.of(2026, 12)
+        assertEquals("gulkand end 15d", LocalDate.of(2026, 12, 9), gul.endDate)
         val future = gul.copy(startEpochDay = start + 20)
         assertEquals("future start alarm", LocalDateTime.of(2026,12,15,11,0), ScheduleMath.nextOccurrence(future, LocalDateTime.of(2026,11,25,12,0)))
         assertEquals("upcoming status", CourseStatus.UPCOMING, future.courseStatus(today))
