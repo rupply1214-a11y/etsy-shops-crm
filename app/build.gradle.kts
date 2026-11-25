@@ -13,13 +13,27 @@ android {
         applicationId = "com.rish.smartroutine"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
+    // Fixed key so every new APK installs as an update over the previous one (no uninstall needed).
+    signingConfigs {
+        create("app") {
+            storeFile = file("smartroutine.keystore")
+            storePassword = "smartroutine"
+            keyAlias = "smartroutine"
+            keyPassword = "smartroutine"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("app")
+        }
         release {
+            signingConfig = signingConfigs.getByName("app")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

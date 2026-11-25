@@ -29,7 +29,12 @@ class SettingsStore(context: Context) {
         _dynamicColor.value = enabled
     }
 
+    /** True once the pre-loaded routine has been added (so deleting tasks never brings them back). */
+    val starterAdded: Boolean get() = prefs.getBoolean(KEY_STARTER, false)
+    fun markStarterAdded() = prefs.edit().putBoolean(KEY_STARTER, true).apply()
+
     private companion object {
+        const val KEY_STARTER = "starter_routine_added"
         const val KEY_THEME = "theme_mode"
         const val KEY_DYNAMIC = "dynamic_color"
     }

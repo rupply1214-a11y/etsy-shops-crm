@@ -66,6 +66,34 @@ class RoutineRepository(
         reminders.delete(reminder)
     }
 
+    /**
+     * Adds [days] to a finite course. For a course that has already finished, the extra days
+     * start from today, so "+2 days" always gives two more real days of reminders.
+     */
+    suspend fun extendCourse(reminder: Reminder, days: Int) {
+        if (!reminder.isFiniteCourse) return
+        val today = LocalDate.now().toEpochDay()
+        val end = reminder.endEpochDay ?: return
+        val base = maxOf(end, today - 1)
+        val newEnd = base + days
+        val extra = (newEnd - reminder.startEpochDay + 1 - (reminder.courseDays ?: 0)).toInt()
+        val updated = reminder.copy(extraDays = extra, enabled = true)
+        reminders.update(updated)
+        scheduler.schedule(updated)
+    }
+
+    /** Inserts the pre-loaded routine. Skips any task whose title already exists. */
+    suspend fun addStarterRoutine(today: LocalDate = LocalDate.now()) {
+        val existing = reminders.getAll().map { it.title.trim().lowercase() }.toSet()
+        StarterRoutine.reminders(today)
+            .filter { it.title.trim().lowercase() !in existing }
+            .forEach { saveReminder(it) }
+        val existingNudges = intervals.getAll().map { it.title.trim().lowercase() }.toSet()
+        StarterRoutine.nudges()
+            .filter { it.title.trim().lowercase() !in existingNudges }
+            .forEach { saveInterval(it) }
+    }
+
     suspend fun isCompleted(id: Long, day: Long) = completions.isCompleted(id, day)
 
     suspend fun markDone(id: Long, day: Long) = completions.insert(CompletionLog(id, day))

@@ -90,12 +90,19 @@ object NotificationHelper {
     fun buildRinging(context: Context, r: Reminder, day: Long, channel: String = CH_ALARM): Notification {
         val fullScreen = alarmActivityIntent(context, r.id, day)
         val timeText = formatTime(r.hour, r.minute)
+        val date = java.time.LocalDate.ofEpochDay(day)
+        val coursePrefix = if (r.isFiniteCourse) "Day ${r.courseDayOn(date)}/${r.totalCourseDays} · " else ""
+        val body = coursePrefix + when {
+            r.isTaperingOn(date) -> "Tapering: ${r.taperNote}"
+            r.notes.isNotBlank() -> r.notes
+            else -> "Reminder · $timeText"
+        }
         val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setColor(r.colorArgb.toInt())
             .setContentTitle(r.title)
-            .setContentText(r.notes.ifBlank { "Reminder · $timeText" })
-            .setStyle(NotificationCompat.BigTextStyle().bigText(r.notes.ifBlank { "Reminder · $timeText" }))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setOngoing(true)

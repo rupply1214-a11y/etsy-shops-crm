@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rish.smartroutine.alarm.ScheduleMath
+import com.rish.smartroutine.data.CourseStatus
 import com.rish.smartroutine.data.Reminder
 import com.rish.smartroutine.data.RepeatType
 import com.rish.smartroutine.data.RoutineRepository
@@ -41,14 +42,18 @@ class EditorViewModel(
 
     val canSave: Boolean
         get() = loaded && !saving && draft.title.isNotBlank() &&
-            (draft.repeatType != RepeatType.CUSTOM || draft.daysMask != 0)
+            (draft.repeatType != RepeatType.CUSTOM || draft.daysMask != 0) &&
+            (draft.courseDays == null || draft.courseDays!! >= 1)
 
     /** "Rings in 3h 20m" preview for the current draft. */
     fun ringsInText(now: LocalDateTime = LocalDateTime.now()): String {
         val preview = if (draft.repeatType == RepeatType.ONCE)
             draft.copy(onceDateEpochDay = ScheduleMath.onceDateFor(draft.hour, draft.minute, now).toEpochDay())
         else draft
-        val next = ScheduleMath.nextOccurrence(preview, now) ?: return "Pick at least one day"
+        val next = ScheduleMath.nextOccurrence(preview, now)
+            ?: return if (preview.isFiniteCourse && preview.courseStatus(now.toLocalDate()) == CourseStatus.COMPLETED)
+                "Course already finished — change start date or days"
+            else "No upcoming time — check days"
         val mins = Duration.between(now, next).toMinutes() + 1
         val d = mins / (24 * 60); val h = (mins % (24 * 60)) / 60; val m = mins % 60
         return buildString {
@@ -68,6 +73,9 @@ class EditorViewModel(
                     title = draft.title.trim(),
                     discreetLabel = draft.discreetLabel.trim(),
                     notes = draft.notes.trim(),
+                    courseNote = draft.courseNote.trim(),
+                    taperNote = draft.taperNote.trim(),
+                    taperFromDay = draft.taperFromDay?.coerceAtMost(draft.courseDays ?: Int.MAX_VALUE),
                     enabled = true,
                 )
             )

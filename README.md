@@ -125,3 +125,12 @@ See https://dontkillmyapp.com for each brand's steps.
 - Add colors: `Catalog.colors`
 - Add vibration patterns: `data/Models.kt → VibrationPattern`. New patterns also get a nudge channel automatically. Android won't change an existing channel's pattern, so if you edit one, rename it.
 - Change the ring timeout: `AlarmService.RING_TIMEOUT_MS` (default 3 minutes; after that the reminder shows as "Missed").
+
+## 6. Course duration (v1.1)
+
+- Each reminder is either an **Ongoing habit** or a course with a **fixed number of days**. A course has a start date (Day 1), an optional stopping note, and an optional tapering note that applies from a chosen day.
+- Task cards show **Day X of N**, a progress bar, the end date and the tapering note. The alarm screen and the notification also show the course day.
+- After the last day, a course stops ringing and moves to **Completed courses**, where you can extend it by **+2 or +3 days**. A course that is still running has a **+1 day** button.
+- On first launch the app adds the pre-loaded routine once (7 tasks plus the hourly water/walk nudge). **Settings → Add pre-loaded routine** adds it again and skips tasks you already have.
+- Database v2 includes a migration from v1, so existing reminders become "Ongoing".
+- The APK is signed with `app/smartroutine.keystore`, so future builds install over the existing app as updates.

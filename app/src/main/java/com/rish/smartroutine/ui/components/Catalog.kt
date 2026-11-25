@@ -97,3 +97,14 @@ fun daysSummary(mask: Int): String = when (mask) {
     0 -> "No days"
     else -> orderedDays.filter { mask.hasDay(it) }.joinToString(", ") { it.short() }
 }
+
+private val shortDateFmt = java.time.format.DateTimeFormatter.ofPattern("EEE, d MMM")
+fun LocalDate.shortLabel(): String = format(shortDateFmt)
+
+/** "Day 3 of 14", "Ongoing habit", "Starts Fri, 28 Nov" or "Course completed". */
+fun Reminder.courseBadge(date: LocalDate = LocalDate.now()): String = when (courseStatus(date)) {
+    com.rish.smartroutine.data.CourseStatus.ONGOING -> "Ongoing habit"
+    com.rish.smartroutine.data.CourseStatus.UPCOMING -> "Starts ${startDate.shortLabel()}"
+    com.rish.smartroutine.data.CourseStatus.ACTIVE -> "Day ${courseDayOn(date)} of $totalCourseDays"
+    com.rish.smartroutine.data.CourseStatus.COMPLETED -> "Course completed"
+}

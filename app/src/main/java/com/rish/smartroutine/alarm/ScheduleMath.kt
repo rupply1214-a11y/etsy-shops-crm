@@ -21,8 +21,12 @@ object ScheduleMath {
             return day.atTime(time).takeIf { it.isAfter(now) }
         }
         if (r.effectiveMask == 0) return null
+        // Finite courses: never before Day 1, never after the end date.
+        val firstDay = maxOf(now.toLocalDate(), if (r.isFiniteCourse) r.startDate else now.toLocalDate())
+        val lastDay = r.endDate
         for (offset in 0L..7L) {
-            val date = now.toLocalDate().plusDays(offset)
+            val date = firstDay.plusDays(offset)
+            if (lastDay != null && date.isAfter(lastDay)) return null
             if (!r.effectiveMask.hasDay(date.dayOfWeek)) continue
             val candidate = date.atTime(time)
             if (candidate.isAfter(now)) return candidate

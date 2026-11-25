@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -34,6 +35,8 @@ import com.rish.smartroutine.ui.interval.IntervalScreen
 import com.rish.smartroutine.ui.interval.IntervalViewModel
 import com.rish.smartroutine.ui.settings.SettingsScreen
 import com.rish.smartroutine.ui.theme.SmartRoutineTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -89,7 +92,14 @@ class MainActivity : ComponentActivity() {
                             IntervalScreen(vm = viewModel { IntervalViewModel(c.repository) }, onBack = { nav.popBackStack() })
                         }
                         composable("settings") {
-                            SettingsScreen(settings = c.settings, onBack = { nav.popBackStack() })
+                            SettingsScreen(
+                                settings = c.settings,
+                                onAddStarter = {
+                                    c.appScope.launch(Dispatchers.IO) { c.repository.addStarterRoutine() }
+                                    Toast.makeText(this@MainActivity, "Pre-loaded routine added", Toast.LENGTH_SHORT).show()
+                                },
+                                onBack = { nav.popBackStack() },
+                            )
                         }
                     }
                 }

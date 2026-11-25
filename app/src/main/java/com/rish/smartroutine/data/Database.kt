@@ -10,6 +10,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -63,6 +65,9 @@ interface IntervalDao {
     @Query("SELECT * FROM interval_reminders")
     suspend fun getAll(): List<IntervalReminder>
 
+    @Query("SELECT COUNT(*) FROM interval_reminders")
+    suspend fun count(): Int
+
     @Query("SELECT * FROM interval_reminders WHERE id = :id")
     suspend fun getById(id: Long): IntervalReminder?
 
@@ -81,7 +86,7 @@ interface IntervalDao {
 
 @Database(
     entities = [Reminder::class, CompletionLog::class, IntervalReminder::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -90,6 +95,18 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun intervalDao(): IntervalDao
 
     companion object {
+        /** v2: course duration fields. Existing reminders become "Ongoing". */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE reminders ADD COLUMN courseDays INTEGER")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN startEpochDay INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN extraDays INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN courseNote TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN taperFromDay INTEGER")
+                db.execSQL("ALTER TABLE reminders ADD COLUMN taperNote TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
@@ -97,7 +114,9 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "smart_routine.db",
-            ).build().also { instance = it }
+            )
+                .addMigrations(MIGRATION_1_2)
+                .build().also { instance = it }
         }
     }
 }

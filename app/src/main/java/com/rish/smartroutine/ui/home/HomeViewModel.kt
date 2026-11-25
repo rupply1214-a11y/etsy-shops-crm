@@ -2,6 +2,7 @@ package com.rish.smartroutine.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.rish.smartroutine.data.CourseStatus
 import com.rish.smartroutine.data.Reminder
 import com.rish.smartroutine.data.RoutineRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -26,6 +27,7 @@ data class HomeUiState(
     val now: LocalDateTime = LocalDateTime.now(),
     val today: List<TodayItem> = emptyList(),
     val others: List<Reminder> = emptyList(),
+    val completedCourses: List<Reminder> = emptyList(),
     val hasAnyReminder: Boolean = false,
 ) {
     val date: LocalDate get() = now.toLocalDate()
@@ -59,7 +61,8 @@ class HomeViewModel(private val repo: RoutineRepository) : ViewModel() {
     val state: StateFlow<HomeUiState> =
         combine(repo.observeReminders(), completedToday, now) { reminders, (day, done), now ->
             val nowMinute = now.hour * 60 + now.minute
-            val (todays, others) = reminders.partition { it.isScheduledOn(day) }
+            val (todays, rest) = reminders.partition { it.isScheduledOn(day) }
+            val (completed, others) = rest.partition { it.courseStatus(day) == CourseStatus.COMPLETED }
             HomeUiState(
                 loading = false,
                 now = now,
@@ -68,6 +71,7 @@ class HomeViewModel(private val repo: RoutineRepository) : ViewModel() {
                     TodayItem(it, isDone, overdue = !isDone && it.enabled && it.minuteOfDay < nowMinute)
                 },
                 others = others,
+                completedCourses = completed,
                 hasAnyReminder = reminders.isNotEmpty(),
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
@@ -77,6 +81,8 @@ class HomeViewModel(private val repo: RoutineRepository) : ViewModel() {
     }
 
     fun setEnabled(r: Reminder, enabled: Boolean) = viewModelScope.launch { repo.setReminderEnabled(r, enabled) }
+
+    fun extend(r: Reminder, days: Int) = viewModelScope.launch { repo.extendCourse(r, days) }
 
     fun delete(r: Reminder) = viewModelScope.launch { repo.deleteReminder(r) }
 

@@ -214,6 +214,9 @@ fun EditorScreen(vm: EditorViewModel, onClose: () -> Unit) {
                 }
             }
 
+            // ---- Course duration (not for one-time reminders) ----
+            if (d.repeatType != RepeatType.ONCE) CourseSection(vm, accent)
+
             // ---- Look ----
             SectionCard("Color & icon") {
                 ColorPickerRow(d.colorArgb) { c -> vm.update { it.copy(colorArgb = c) } }

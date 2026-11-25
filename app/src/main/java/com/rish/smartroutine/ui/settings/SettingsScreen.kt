@@ -53,7 +53,7 @@ import com.rish.smartroutine.util.AlarmPermission
 import com.rish.smartroutine.util.Permissions
 
 @Composable
-fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
+fun SettingsScreen(settings: SettingsStore, onAddStarter: () -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val theme by settings.themeMode.collectAsStateWithLifecycle()
     val dynamic by settings.dynamicColor.collectAsStateWithLifecycle()
@@ -128,6 +128,16 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                         Text("Open App info")
                     }
                 }
+            }
+
+            SectionCard("Pre-loaded routine") {
+                Text(
+                    "Adds the 7 daily tasks (with course days and tapering) and the hourly water/walk nudge. " +
+                        "Tasks you already have are skipped.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = onAddStarter) { Text("Add pre-loaded routine") }
             }
 
             SectionCard("Your data") {

@@ -94,6 +94,16 @@ import com.rish.smartroutine.ui.components.repeatSummary
 import com.rish.smartroutine.util.Permissions
 import kotlinx.coroutines.launch
 import java.time.format.DateTimeFormatter
+import androidx.compose.material.icons.automirrored.rounded.TrendingDown
+import androidx.compose.material.icons.rounded.AllInclusive
+import androidx.compose.material.icons.rounded.EventAvailable
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.TextButton
+import com.rish.smartroutine.data.CourseStatus
+import com.rish.smartroutine.ui.components.courseBadge
+import com.rish.smartroutine.ui.components.shortLabel
+import java.time.LocalDate
 
 private val timeFmt = DateTimeFormatter.ofPattern("h:mm")
 private val ampmFmt = DateTimeFormatter.ofPattern("a")
@@ -126,6 +136,11 @@ fun HomeScreen(
             val res = snackbar.showSnackbar("“${r.title}” deleted", actionLabel = "Undo", withDismissAction = true)
             if (res == SnackbarResult.ActionPerformed) vm.undoDelete(r)
         }
+    }
+
+    val onExtend: (Reminder, Int) -> Unit = { r, days ->
+        vm.extend(r, days)
+        scope.launch { snackbar.showSnackbar("“${r.title}” extended by +$days day${if (days > 1) "s" else ""}") }
     }
 
     Scaffold(
@@ -182,6 +197,8 @@ fun HomeScreen(
                             overdue = item.overdue,
                             isNext = state.nextUp?.reminder?.id == item.reminder.id,
                             showCheck = true,
+                            date = state.date,
+                            onExtend = { d -> onExtend(item.reminder, d) },
                             onToggleDone = { vm.toggleDone(item) },
                             onToggleEnabled = { vm.setEnabled(item.reminder, it) },
                             onClick = { onEdit(item.reminder.id) },
@@ -189,14 +206,24 @@ fun HomeScreen(
                     }
                 }
                 if (state.others.isNotEmpty()) {
-                    item(key = "h_other") { SectionHeader("Other days") }
+                    item(key = "h_other") { SectionHeader("Other days & upcoming") }
                     items(state.others, key = { "o${it.id}" }) { r ->
                         SwipeToDelete(r, onDelete, Modifier.animateItem()) {
                             TimelineRow(
                                 reminder = r, done = false, overdue = false, isNext = false, showCheck = false,
+                                date = state.date,
+                                onExtend = { d -> onExtend(r, d) },
                                 onToggleDone = {}, onToggleEnabled = { vm.setEnabled(r, it) },
                                 onClick = { onEdit(r.id) },
                             )
+                        }
+                    }
+                }
+                if (state.completedCourses.isNotEmpty()) {
+                    item(key = "h_done") { SectionHeader("Completed courses") }
+                    items(state.completedCourses, key = { "c${it.id}" }) { r ->
+                        SwipeToDelete(r, onDelete, Modifier.animateItem()) {
+                            CompletedCourseCard(r, onExtend = { d -> onExtend(r, d) }, onClick = { onEdit(r.id) })
                         }
                     }
                 }
@@ -331,6 +358,8 @@ private fun TimelineRow(
     overdue: Boolean,
     isNext: Boolean,
     showCheck: Boolean,
+    date: LocalDate,
+    onExtend: (Int) -> Unit,
     onToggleDone: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onClick: () -> Unit,
@@ -380,7 +409,7 @@ private fun TimelineRow(
                     if (reminder.notes.isNotBlank()) {
                         Text(
                             reminder.notes, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis,
                         )
                     }
                     FlowRow(
@@ -392,6 +421,7 @@ private fun TimelineRow(
                         if (reminder.discreetLabel.isNotBlank()) Pill("Private", MaterialTheme.colorScheme.secondary, Icons.Rounded.Lock)
                         if (overdue && showCheck) Pill("Overdue", MaterialTheme.colorScheme.error)
                     }
+                    CourseInfo(reminder, date, accent, onExtend)
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Switch(
@@ -468,3 +498,99 @@ private fun EmptyState(onAdd: () -> Unit, onIntervals: () -> Unit) {
         OutlinedButton(onClick = onIntervals) { Icon(Icons.Rounded.Timer, null); Spacer(Modifier.width(6.dp)); Text("Add interval nudge") }
     }
 }
+
+@Composable
+private fun CourseInfo(r: Reminder, date: LocalDate, accent: Color, onExtend: (Int) -> Unit) {
+    val status = r.courseStatus(date)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Pill(
+                r.courseBadge(date),
+                if (status == CourseStatus.ONGOING) MaterialTheme.colorScheme.tertiary else accent,
+                if (status == CourseStatus.ONGOING) Icons.Rounded.AllInclusive else Icons.Rounded.EventAvailable,
+            )
+            r.endDate?.let {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Ends ${it.shortLabel()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (r.isFiniteCourse && status == CourseStatus.ACTIVE) {
+            val total = r.totalCourseDays.coerceAtLeast(1)
+            val p = r.courseDayOn(date).coerceIn(0, total) / total.toFloat()
+            LinearProgressIndicator(
+                progress = { p },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                color = accent,
+                trackColor = accent.copy(alpha = 0.15f),
+            )
+        }
+        if (r.courseNote.isNotBlank()) {
+            Text(r.courseNote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (r.taperNote.isNotBlank()) {
+            val tapering = r.isTaperingOn(date)
+            val color = if (tapering) Color(0xFFD97706) else MaterialTheme.colorScheme.onSurfaceVariant
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(Icons.AutoMirrored.Rounded.TrendingDown, null, tint = color, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    if (tapering) "Tapering now — ${r.taperNote}" else "From Day ${r.taperFromDay}: ${r.taperNote}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = color,
+                    fontWeight = if (tapering) FontWeight.SemiBold else null,
+                )
+            }
+        }
+        if (r.isFiniteCourse && status != CourseStatus.COMPLETED) {
+            TextButton(
+                onClick = { onExtend(1) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Icon(Icons.Rounded.Add, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("+1 day (missed a day)", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletedCourseCard(r: Reminder, onExtend: (Int) -> Unit, onClick: () -> Unit) {
+    val accent = r.colorArgb.asColor()
+    Card(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AnimatedIconBadge(Catalog.icon(r.iconKey), accent)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(r.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF10B981), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "Course completed · ${r.totalCourseDays} days · ended ${r.endDate?.shortLabel() ?: ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Text("Missed a dose? Extend the course:", style = MaterialTheme.typography.labelMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = { onExtend(2) }) { Text("+2 days") }
+                FilledTonalButton(onClick = { onExtend(3) }) { Text("+3 days") }
+            }
+        }
+    }
+}
+

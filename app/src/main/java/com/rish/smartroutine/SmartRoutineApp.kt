@@ -29,7 +29,13 @@ class SmartRoutineApp : Application() {
         container = AppContainer(this)
         NotificationHelper.createChannels(this)
         // Cheap safety net: make sure every alarm is armed whenever the process starts.
-        container.appScope.launch(Dispatchers.IO) { container.repository.rescheduleAll() }
+        container.appScope.launch(Dispatchers.IO) {
+            if (!container.settings.starterAdded) {
+                container.repository.addStarterRoutine()
+                container.settings.markStarterAdded()
+            }
+            container.repository.rescheduleAll()
+        }
     }
 }
 

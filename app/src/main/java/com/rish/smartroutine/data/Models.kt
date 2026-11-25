@@ -1,5 +1,6 @@
 package com.rish.smartroutine.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -77,6 +78,19 @@ data class Reminder(
     val ringtoneUri: String? = null,
     val snoozeMinutes: Int = 10,
     val createdAt: Long = System.currentTimeMillis(),
+
+    // ---------- Course duration ----------
+    /** null = Ongoing / daily habit. Otherwise the planned number of days (e.g. 7, 10, 14). */
+    val courseDays: Int? = null,
+    /** Day 1 of the course. */
+    @ColumnInfo(defaultValue = "0") val startEpochDay: Long = LocalDate.now().toEpochDay(),
+    /** Days added with the +1 / +2 / +3 extend buttons (missed doses, travel). */
+    @ColumnInfo(defaultValue = "0") val extraDays: Int = 0,
+    /** e.g. "Adjustable: 7 to 14 days". */
+    @ColumnInfo(defaultValue = "''") val courseNote: String = "",
+    /** Course day from which the tapering note applies (null = no tapering). */
+    val taperFromDay: Int? = null,
+    @ColumnInfo(defaultValue = "''") val taperNote: String = "",
 ) {
     val effectiveMask: Int
         get() = when (repeatType) {
@@ -90,11 +104,47 @@ data class Reminder(
 
     fun isScheduledOn(date: LocalDate): Boolean =
         if (repeatType == RepeatType.ONCE) onceDateEpochDay == date.toEpochDay()
-        else effectiveMask.hasDay(date.dayOfWeek)
+        else effectiveMask.hasDay(date.dayOfWeek) && isInCourse(date)
+
+    // ---------- Course helpers (derived, not stored) ----------
+
+    val isFiniteCourse: Boolean get() = courseDays != null && repeatType != RepeatType.ONCE
+
+    val totalCourseDays: Int get() = (courseDays ?: 0) + extraDays
+
+    val endEpochDay: Long? get() = if (isFiniteCourse) startEpochDay + totalCourseDays - 1 else null
+
+    val startDate: LocalDate get() = LocalDate.ofEpochDay(startEpochDay)
+    val endDate: LocalDate? get() = endEpochDay?.let(LocalDate::ofEpochDay)
+
+    /** 1-based course day for [date] (can be <1 before start or > total after end). */
+    fun courseDayOn(date: LocalDate): Int = (date.toEpochDay() - startEpochDay + 1).toInt()
+
+    fun courseStatus(date: LocalDate): CourseStatus {
+        val end = endEpochDay ?: return CourseStatus.ONGOING
+        val d = date.toEpochDay()
+        return when {
+            d < startEpochDay -> CourseStatus.UPCOMING
+            d > end -> CourseStatus.COMPLETED
+            else -> CourseStatus.ACTIVE
+        }
+    }
+
+    /** Ongoing habits are always "in course"; finite ones only between start and end date. */
+    fun isInCourse(date: LocalDate): Boolean {
+        val end = endEpochDay ?: return true
+        val d = date.toEpochDay()
+        return d in startEpochDay..end
+    }
+
+    fun isTaperingOn(date: LocalDate): Boolean =
+        taperFromDay != null && courseStatus(date) == CourseStatus.ACTIVE && courseDayOn(date) >= taperFromDay
 
     /** Title safe to show while the device is locked. */
     fun lockScreenTitle(): String = discreetLabel.ifBlank { title }
 }
+
+enum class CourseStatus { ONGOING, UPCOMING, ACTIVE, COMPLETED }
 
 /** One row per reminder per day it was completed. "Reset at midnight" happens automatically:
  *  a new day simply has no rows yet, while the schedule itself is never touched. */

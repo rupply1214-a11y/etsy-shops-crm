@@ -61,6 +61,8 @@ import com.rish.smartroutine.alarm.RingingAlarm
 import com.rish.smartroutine.container
 import com.rish.smartroutine.ui.components.Catalog
 import com.rish.smartroutine.ui.components.asColor
+import com.rish.smartroutine.ui.components.courseBadge
+import com.rish.smartroutine.ui.components.shortLabel
 import com.rish.smartroutine.ui.theme.SmartRoutineTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -179,7 +181,27 @@ private fun AlarmScreen(
                     textAlign = TextAlign.Center,
                     fontWeight = FontWeight.Bold,
                 )
-                if (showNotes) {
+                val today = java.time.LocalDate.ofEpochDay(alarm.day)
+                if (r.isFiniteCourse) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        r.courseBadge(today) + (r.endDate?.let { " · ends ${it.shortLabel()}" } ?: ""),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.18f))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+                val privateLocked = locked && r.discreetLabel.isNotBlank()
+                if (r.isTaperingOn(today) && !privateLocked) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Tapering today: ${r.taperNote}",
+                        color = Color(0xFFFFD27A),
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                    )
+                } else if (showNotes) {
                     Spacer(Modifier.height(8.dp))
                     Text(r.notes, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
                 }
